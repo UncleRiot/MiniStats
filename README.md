@@ -2,6 +2,10 @@
 
 > Lightweight desktop overlay for real-time system monitoring
 
+####################################
+Important: Start as administrator!!!
+####################################
+
 ## ✨ Features
 
 - CPU & GPU temperature display
