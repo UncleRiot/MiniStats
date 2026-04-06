@@ -5,6 +5,7 @@
 ## ✨ Features
 
 - CPU & GPU temperature display
+- CPU & GPU usage display
 - Clean and minimal UI
 - Customizable layout
 - System tray integration

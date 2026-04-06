@@ -8,10 +8,10 @@
 		<ImplicitUsings>enable</ImplicitUsings>
 		<ApplicationIcon>Ressources\ministats_icon.ico</ApplicationIcon>
 
-		<Version>0.0.14</Version>
-		<FileVersion>0.0.14.0</FileVersion>
-		<AssemblyVersion>0.0.14.0</AssemblyVersion>
-		<InformationalVersion>0.0.14</InformationalVersion>
+		<Version>0.0.16</Version>
+		<FileVersion>0.0.16.0</FileVersion>
+		<AssemblyVersion>0.0.16.0</AssemblyVersion>
+		<InformationalVersion>0.0.16</InformationalVersion>
 
 		<Company>Daniel Capilla</Company>
 		<Product>MiniStats</Product>

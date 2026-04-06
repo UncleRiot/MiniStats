@@ -45,6 +45,12 @@ namespace MiniStats
         private string fpsText = "-";
         private string cpuTemperatureText = "-";
         private string gpuTemperatureText = "-";
+        private string cpuLoadText = "-";
+        private string gpuLoadText = "-";
+
+        private bool showCpuLoad;
+        private bool showGpuLoad;
+        private string selectedGpuName = "Auto";
 
         private sealed class OverlaySettings
         {
@@ -57,7 +63,10 @@ namespace MiniStats
             public bool ShowGpu { get; set; } = true;
             public bool ShowCpuInTrayIcon { get; set; }
             public bool ShowGpuInTrayIcon { get; set; }
+            public bool ShowCpuLoad { get; set; }
+            public bool ShowGpuLoad { get; set; }
             public bool StartInSystray { get; set; }
+            public string SelectedGpuName { get; set; } = "Auto";
             public bool DisplayHorizontal { get; set; }
             public int BoxWidth { get; set; } = 170;
             public int BoxSpacing { get; set; } = 8;
@@ -80,25 +89,21 @@ namespace MiniStats
             BackColor = Color.Black;
             TransparencyKey = Color.Empty;
 
-            Icon? appIcon = Icon.ExtractAssociatedIcon(Application.ExecutablePath);
-            if (appIcon != null)
-            {
-                Icon = (Icon)appIcon.Clone();
-                appIcon.Dispose();
-            }
-
             LoadSettings();
             UpdateOverlayBounds();
 
             hardwareMonitorService = new HardwareMonitorService();
+            hardwareMonitorService.SetSelectedGpuName(selectedGpuName);
 
             overlayMenu = new ContextMenuStrip();
             overlayMenu.Items.Add("Settings", null, OpenConfig);
+            overlayMenu.Items.Add("Reset position", null, ResetOverlayPosition);
             overlayMenu.Items.Add("Exit", null, CloseOverlay);
 
             trayMenu = new ContextMenuStrip();
             trayMenu.Items.Add("Show", null, ShowOverlayFromTray);
             trayMenu.Items.Add("Settings", null, OpenConfig);
+            trayMenu.Items.Add("Reset position", null, ResetOverlayPosition);
             trayMenu.Items.Add("Exit", null, CloseOverlay);
 
             notifyIcon = new NotifyIcon();
@@ -108,10 +113,16 @@ namespace MiniStats
             notifyIcon.ContextMenuStrip = trayMenu;
             notifyIcon.DoubleClick += ShowOverlayFromTray;
 
+            Icon? appIcon = Icon.ExtractAssociatedIcon(Application.ExecutablePath);
+            if (appIcon != null)
+            {
+                Icon = (Icon)appIcon.Clone();
+                appIcon.Dispose();
+            }
+
             MouseDown += StartDrag;
             MouseMove += DoDrag;
             MouseUp += EndDragOrMenu;
-            DoubleClick += CloseOverlay;
             FormClosing += Overlay_FormClosing;
 
             refreshTimer = new System.Windows.Forms.Timer();
@@ -191,17 +202,49 @@ namespace MiniStats
                 ? $"{Math.Round(hardwareSnapshot.Fps.Value)}"
                 : "-";
 
-            cpuTemperatureText = hardwareSnapshot.CpuTemperature.HasValue
-                ? $"{Math.Round(hardwareSnapshot.CpuTemperature.Value)} °C"
+            cpuLoadText = hardwareSnapshot.CpuLoad.HasValue
+                ? $"{Math.Round(hardwareSnapshot.CpuLoad.Value)}%"
                 : "-";
 
-            gpuTemperatureText = hardwareSnapshot.GpuTemperature.HasValue
-                ? $"{Math.Round(hardwareSnapshot.GpuTemperature.Value)} °C"
+            gpuLoadText = hardwareSnapshot.GpuLoad.HasValue
+                ? $"{Math.Round(hardwareSnapshot.GpuLoad.Value)}%"
                 : "-";
+
+            string cpuTemperatureOnlyText = hardwareSnapshot.CpuTemperature.HasValue
+                ? $"{Math.Round(hardwareSnapshot.CpuTemperature.Value)}°C"
+                : "-";
+
+            string gpuTemperatureOnlyText = hardwareSnapshot.GpuTemperature.HasValue
+                ? $"{Math.Round(hardwareSnapshot.GpuTemperature.Value)}°C"
+                : "-";
+
+            cpuTemperatureText = BuildCombinedValueText(cpuTemperatureOnlyText, cpuLoadText, showCpu, showCpuLoad);
+            gpuTemperatureText = BuildCombinedValueText(gpuTemperatureOnlyText, gpuLoadText, showGpu, showGpuLoad);
 
             UpdateTrayIcon(hardwareSnapshot);
             UpdateOverlayBounds();
             RenderLayered();
+        }
+
+        private void ResetOverlayPosition(object? sender, EventArgs e)
+        {
+            Rectangle workingArea = Screen.FromPoint(Cursor.Position).WorkingArea;
+
+            Location = new Point(
+                workingArea.Left + ((workingArea.Width - Width) / 2),
+                workingArea.Top + ((workingArea.Height - Height) / 2));
+
+            if (!Visible)
+            {
+                Show();
+                ShowInTaskbar = true;
+                notifyIcon.Visible = false;
+                WindowState = FormWindowState.Normal;
+            }
+
+            SaveSettingsSafe();
+            RenderLayered();
+            Activate();
         }
 
         private void CloseOverlay(object? sender, EventArgs e)
@@ -256,7 +299,10 @@ namespace MiniStats
             bool originalShowGpu = showGpu;
             bool originalShowCpuInTrayIcon = showCpuInTrayIcon;
             bool originalShowGpuInTrayIcon = showGpuInTrayIcon;
+            bool originalShowCpuLoad = showCpuLoad;
+            bool originalShowGpuLoad = showGpuLoad;
             bool originalStartInSystray = startInSystray;
+            string originalSelectedGpuName = selectedGpuName;
             bool originalDisplayHorizontal = displayHorizontal;
             int originalBoxWidth = boxWidth;
             int originalBoxSpacing = boxSpacing;
@@ -269,12 +315,14 @@ namespace MiniStats
             configForm.Text = "MiniStats settings - © D. Capilla 2026";
             configForm.FormBorderStyle = FormBorderStyle.FixedDialog;
             configForm.StartPosition = FormStartPosition.Manual;
-            configForm.ClientSize = new Size(300, 390);
+            configForm.ClientSize = new Size(300, 392);
             configForm.MaximizeBox = false;
             configForm.MinimizeBox = false;
             configForm.ShowInTaskbar = false;
             configForm.AutoScaleMode = AutoScaleMode.Font;
             configForm.Location = new Point(Right + 12, Top);
+
+            ToolTip toolTip = new ToolTip();
 
             Label fontLabel = new Label
             {
@@ -293,6 +341,8 @@ namespace MiniStats
                 Maximum = 32,
                 Value = fontSize
             };
+
+            toolTip.SetToolTip(fontUpDown, "Text size");
 
             fontUpDown.ValueChanged += (_, _) =>
             {
@@ -318,244 +368,179 @@ namespace MiniStats
                 AutoSize = false,
                 Minimum = 0,
                 Maximum = 100,
-                TickFrequency = 10,
-                SmallChange = 1,
-                LargeChange = 10,
                 Value = Math.Max(0, Math.Min(100, backgroundOpacityPercent))
             };
 
-            Label opacityValueLabel = new Label
-            {
-                Text = $"{opacityTrackBar.Value}%",
-                Left = 235,
-                Top = 54,
-                Width = 35
-            };
-
-            opacityTrackBar.ValueChanged += (_, _) =>
-            {
-                backgroundOpacityPercent = opacityTrackBar.Value;
-                opacityValueLabel.Text = $"{opacityTrackBar.Value}%";
-                RenderLayered();
-            };
-
-            Label fpsLabel = new Label
-            {
-                Text = "FPS",
-                Left = 12,
-                Top = 92,
-                Width = 120
-            };
-
-            CheckBox fpsCheckBox = new CheckBox
-            {
-                Left = 140,
-                Top = 90,
-                Width = 18,
-                Height = 24,
-                Checked = showFps
-            };
-
-            fpsCheckBox.CheckedChanged += (_, _) =>
-            {
-                showFps = fpsCheckBox.Checked;
-                UpdateOverlayBounds();
-                RenderLayered();
-            };
+            toolTip.SetToolTip(opacityTrackBar, "Background opacity");
 
             Label cpuLabel = new Label
             {
                 Text = "CPU",
                 Left = 12,
-                Top = 120,
+                Top = 92,
                 Width = 120
             };
 
             CheckBox cpuCheckBox = new CheckBox
             {
                 Left = 140,
-                Top = 118,
+                Top = 90,
                 Width = 18,
                 Height = 24,
-                Checked = showCpu,
-                Enabled = isRunningAsAdministrator
+                Checked = showCpu
             };
 
-            cpuCheckBox.CheckedChanged += (_, _) =>
-            {
-                showCpu = cpuCheckBox.Checked;
-                UpdateOverlayBounds();
-                RenderLayered();
-            };
+            toolTip.SetToolTip(cpuCheckBox, "Show CPU temp");
 
             CheckBox cpuTrayCheckBox = new CheckBox
             {
                 Left = 165,
-                Top = 118,
+                Top = 90,
                 Width = 18,
                 Height = 24,
                 Checked = showCpuInTrayIcon
             };
 
-            cpuTrayCheckBox.CheckedChanged += (_, _) =>
+            toolTip.SetToolTip(cpuTrayCheckBox, "CPU in tray");
+
+            CheckBox cpuLoadCheckBox = new CheckBox
             {
-                showCpuInTrayIcon = cpuTrayCheckBox.Checked;
+                Left = 190,
+                Top = 90,
+                Width = 18,
+                Height = 24,
+                Checked = showCpuLoad
             };
 
-            Panel cpuOverlayColorPanel = CreateColorPanel(190, 119, cpuOverlayValueColor);
-            Panel cpuTrayColorPanel = CreateColorPanel(215, 119, cpuTrayValueColor);
+            toolTip.SetToolTip(cpuLoadCheckBox, "CPU load");
 
-            cpuOverlayColorPanel.Click += (_, _) => SelectCpuOverlayValueColor(cpuOverlayColorPanel);
-            cpuTrayColorPanel.Click += (_, _) => SelectCpuTrayValueColor(cpuTrayColorPanel);
+            Panel cpuOverlayColorPanel = CreateColorPanel(215, 91, cpuOverlayValueColor);
+            Panel cpuTrayColorPanel = CreateColorPanel(240, 91, cpuTrayValueColor);
+
+            toolTip.SetToolTip(cpuOverlayColorPanel, "Overlay color");
+            toolTip.SetToolTip(cpuTrayColorPanel, "Tray color");
 
             Label gpuLabel = new Label
             {
                 Text = "GPU",
                 Left = 12,
-                Top = 148,
+                Top = 120,
                 Width = 120
             };
 
             CheckBox gpuCheckBox = new CheckBox
             {
                 Left = 140,
-                Top = 146,
+                Top = 118,
                 Width = 18,
                 Height = 24,
                 Checked = showGpu
             };
 
-            gpuCheckBox.CheckedChanged += (_, _) =>
-            {
-                showGpu = gpuCheckBox.Checked;
-                UpdateOverlayBounds();
-                RenderLayered();
-            };
+            toolTip.SetToolTip(gpuCheckBox, "Show GPU temp");
 
             CheckBox gpuTrayCheckBox = new CheckBox
             {
                 Left = 165,
-                Top = 146,
+                Top = 118,
                 Width = 18,
                 Height = 24,
                 Checked = showGpuInTrayIcon
             };
 
-            gpuTrayCheckBox.CheckedChanged += (_, _) =>
+            toolTip.SetToolTip(gpuTrayCheckBox, "GPU in tray");
+
+            CheckBox gpuLoadCheckBox = new CheckBox
             {
-                showGpuInTrayIcon = gpuTrayCheckBox.Checked;
+                Left = 190,
+                Top = 118,
+                Width = 18,
+                Height = 24,
+                Checked = showGpuLoad
             };
 
-            Panel gpuOverlayColorPanel = CreateColorPanel(190, 147, gpuOverlayValueColor);
-            Panel gpuTrayColorPanel = CreateColorPanel(215, 147, gpuTrayValueColor);
+            toolTip.SetToolTip(gpuLoadCheckBox, "GPU load");
 
-            gpuOverlayColorPanel.Click += (_, _) => SelectGpuOverlayValueColor(gpuOverlayColorPanel);
-            gpuTrayColorPanel.Click += (_, _) => SelectGpuTrayValueColor(gpuTrayColorPanel);
+            Panel gpuOverlayColorPanel = CreateColorPanel(215, 119, gpuOverlayValueColor);
+            Panel gpuTrayColorPanel = CreateColorPanel(240, 119, gpuTrayValueColor);
+
+            toolTip.SetToolTip(gpuOverlayColorPanel, "Overlay color");
+            toolTip.SetToolTip(gpuTrayColorPanel, "Tray color");
 
             Label startInSystrayLabel = new Label
             {
                 Text = "Start in Systray",
                 Left = 12,
-                Top = 176,
+                Top = 148,
                 Width = 120
             };
 
             CheckBox startInSystrayCheckBox = new CheckBox
             {
                 Left = 140,
-                Top = 174,
+                Top = 146,
                 Width = 18,
                 Height = 24,
                 Checked = startInSystray
             };
 
-            startInSystrayCheckBox.CheckedChanged += (_, _) =>
+            toolTip.SetToolTip(startInSystrayCheckBox, "Start minimized");
+
+            Label gpuSourceLabel = new Label
             {
-                startInSystray = startInSystrayCheckBox.Checked;
+                Text = "GPU Source",
+                Left = 12,
+                Top = 178,
+                Width = 120
             };
+
+            ComboBox gpuSourceComboBox = new ComboBox
+            {
+                Left = 140,
+                Top = 175,
+                Width = 120,
+                DropDownStyle = ComboBoxStyle.DropDownList
+            };
+
+            toolTip.SetToolTip(gpuSourceComboBox, "Select GPU");
+
+            gpuSourceComboBox.Items.Add("Auto");
+
+            string[] availableGpuNames = hardwareMonitorService.GetAvailableGpuNames();
+            foreach (string gpuName in availableGpuNames)
+            {
+                gpuSourceComboBox.Items.Add(gpuName);
+            }
+
+            gpuSourceComboBox.SelectedItem = selectedGpuName ?? "Auto";
 
             Label displayLabel = new Label
             {
                 Text = "Display",
                 Left = 12,
-                Top = 208,
+                Top = 210,
                 Width = 120
             };
 
             ComboBox displayComboBox = new ComboBox
             {
                 Left = 140,
-                Top = 205,
+                Top = 207,
                 Width = 120,
                 DropDownStyle = ComboBoxStyle.DropDownList
             };
+
+            toolTip.SetToolTip(displayComboBox, "Layout");
 
             displayComboBox.Items.Add("Vertical");
             displayComboBox.Items.Add("Horizontal");
             displayComboBox.SelectedItem = displayHorizontal ? "Horizontal" : "Vertical";
 
-            displayComboBox.SelectedIndexChanged += (_, _) =>
-            {
-                displayHorizontal = string.Equals(displayComboBox.SelectedItem?.ToString(), "Horizontal", StringComparison.Ordinal);
-                UpdateOverlayBounds();
-                RenderLayered();
-            };
-
-            Label widthLabel = new Label
-            {
-                Text = "Box Width",
-                Left = 12,
-                Top = 240,
-                Width = 120
-            };
-
-            NumericUpDown widthUpDown = new NumericUpDown
-            {
-                Left = 140,
-                Top = 237,
-                Width = 120,
-                Minimum = 80,
-                Maximum = 400,
-                Value = boxWidth
-            };
-
-            widthUpDown.ValueChanged += (_, _) =>
-            {
-                boxWidth = (int)widthUpDown.Value;
-                UpdateOverlayBounds();
-                RenderLayered();
-            };
-
-            Label spacingLabel = new Label
-            {
-                Text = "Table Spacing",
-                Left = 12,
-                Top = 272,
-                Width = 120
-            };
-
-            NumericUpDown spacingUpDown = new NumericUpDown
-            {
-                Left = 140,
-                Top = 269,
-                Width = 120,
-                Minimum = 0,
-                Maximum = 50,
-                Value = boxSpacing
-            };
-
-            spacingUpDown.ValueChanged += (_, _) =>
-            {
-                boxSpacing = (int)spacingUpDown.Value;
-                UpdateOverlayBounds();
-                RenderLayered();
-            };
-
             Button okButton = new Button
             {
                 Text = "OK",
-                Left = 130,
-                Top = 340,
+                Left = 110,
+                Top = 332,
                 Width = 60,
                 Height = 26,
                 DialogResult = DialogResult.OK
@@ -564,81 +549,46 @@ namespace MiniStats
             Button cancelButton = new Button
             {
                 Text = "Cancel",
-                Left = 200,
-                Top = 340,
-                Width = 60,
+                Left = 180,
+                Top = 332,
+                Width = 90,
                 Height = 26,
                 DialogResult = DialogResult.Cancel
             };
 
-            configForm.Controls.Add(fontLabel);
-            configForm.Controls.Add(fontUpDown);
-            configForm.Controls.Add(opacityLabel);
-            configForm.Controls.Add(opacityTrackBar);
-            configForm.Controls.Add(opacityValueLabel);
-            configForm.Controls.Add(fpsLabel);
-            configForm.Controls.Add(fpsCheckBox);
-            configForm.Controls.Add(cpuLabel);
-            configForm.Controls.Add(cpuCheckBox);
-            configForm.Controls.Add(cpuTrayCheckBox);
-            configForm.Controls.Add(cpuOverlayColorPanel);
-            configForm.Controls.Add(cpuTrayColorPanel);
-            configForm.Controls.Add(gpuLabel);
-            configForm.Controls.Add(gpuCheckBox);
-            configForm.Controls.Add(gpuTrayCheckBox);
-            configForm.Controls.Add(gpuOverlayColorPanel);
-            configForm.Controls.Add(gpuTrayColorPanel);
-            configForm.Controls.Add(startInSystrayLabel);
-            configForm.Controls.Add(startInSystrayCheckBox);
-            configForm.Controls.Add(displayLabel);
-            configForm.Controls.Add(displayComboBox);
-            configForm.Controls.Add(widthLabel);
-            configForm.Controls.Add(widthUpDown);
-            configForm.Controls.Add(spacingLabel);
-            configForm.Controls.Add(spacingUpDown);
-            configForm.Controls.Add(okButton);
-            configForm.Controls.Add(cancelButton);
+            configForm.Controls.AddRange(new Control[]
+            {
+        fontLabel, fontUpDown,
+        opacityLabel, opacityTrackBar,
+        cpuLabel, cpuCheckBox, cpuTrayCheckBox, cpuLoadCheckBox, cpuOverlayColorPanel, cpuTrayColorPanel,
+        gpuLabel, gpuCheckBox, gpuTrayCheckBox, gpuLoadCheckBox, gpuOverlayColorPanel, gpuTrayColorPanel,
+        startInSystrayLabel, startInSystrayCheckBox,
+        gpuSourceLabel, gpuSourceComboBox,
+        displayLabel, displayComboBox,
+        okButton, cancelButton
+            });
 
             configForm.AcceptButton = okButton;
             configForm.CancelButton = cancelButton;
 
-            DialogResult result = configForm.ShowDialog();
-
-            if (result == DialogResult.OK)
-            {
-                fontSize = (int)fontUpDown.Value;
-                backgroundOpacityPercent = opacityTrackBar.Value;
-                showFps = fpsCheckBox.Checked;
-                showCpu = cpuCheckBox.Checked;
-                showGpu = gpuCheckBox.Checked;
-                showCpuInTrayIcon = cpuTrayCheckBox.Checked;
-                showGpuInTrayIcon = gpuTrayCheckBox.Checked;
-                startInSystray = startInSystrayCheckBox.Checked;
-                displayHorizontal = string.Equals(displayComboBox.SelectedItem?.ToString(), "Horizontal", StringComparison.Ordinal);
-                boxWidth = (int)widthUpDown.Value;
-                boxSpacing = (int)spacingUpDown.Value;
-
-                SaveSettingsSafe();
-                RefreshOverlay();
+            if (configForm.ShowDialog() != DialogResult.OK)
                 return;
-            }
 
-            fontSize = originalFontSize;
-            backgroundOpacityPercent = originalBackgroundOpacityPercent;
-            showFps = originalShowFps;
-            showCpu = originalShowCpu;
-            showGpu = originalShowGpu;
-            showCpuInTrayIcon = originalShowCpuInTrayIcon;
-            showGpuInTrayIcon = originalShowGpuInTrayIcon;
-            startInSystray = originalStartInSystray;
-            displayHorizontal = originalDisplayHorizontal;
-            boxWidth = originalBoxWidth;
-            boxSpacing = originalBoxSpacing;
-            cpuOverlayValueColor = originalCpuOverlayValueColor;
-            gpuOverlayValueColor = originalGpuOverlayValueColor;
-            cpuTrayValueColor = originalCpuTrayValueColor;
-            gpuTrayValueColor = originalGpuTrayValueColor;
+            fontSize = (int)fontUpDown.Value;
+            backgroundOpacityPercent = opacityTrackBar.Value;
+            showCpu = cpuCheckBox.Checked;
+            showGpu = gpuCheckBox.Checked;
+            showCpuInTrayIcon = cpuTrayCheckBox.Checked;
+            showGpuInTrayIcon = gpuTrayCheckBox.Checked;
+            showCpuLoad = cpuLoadCheckBox.Checked;
+            showGpuLoad = gpuLoadCheckBox.Checked;
+            startInSystray = startInSystrayCheckBox.Checked;
+            selectedGpuName = gpuSourceComboBox.SelectedItem?.ToString() ?? "Auto";
+            displayHorizontal = displayComboBox.SelectedItem?.ToString() == "Horizontal";
 
+            hardwareMonitorService.SetSelectedGpuName(selectedGpuName);
+
+            SaveSettingsSafe();
             RefreshOverlay();
         }
 
@@ -664,6 +614,36 @@ namespace MiniStats
             };
 
             return panel;
+        }
+
+        private static string BuildCombinedValueText(string temperatureText, string loadText, bool showTemperature, bool showLoad)
+        {
+            if (showTemperature && showLoad)
+            {
+                if (temperatureText == "-" && loadText == "-")
+                {
+                    return "-";
+                }
+
+                if (temperatureText == "-")
+                {
+                    return loadText;
+                }
+
+                if (loadText == "-")
+                {
+                    return temperatureText;
+                }
+
+                return $"{temperatureText} / {loadText}";
+            }
+
+            if (showLoad)
+            {
+                return loadText;
+            }
+
+            return temperatureText;
         }
 
         private void SelectCpuOverlayValueColor(Panel panel)
@@ -758,7 +738,10 @@ namespace MiniStats
                 showGpu = settings.ShowGpu;
                 showCpuInTrayIcon = settings.ShowCpuInTrayIcon;
                 showGpuInTrayIcon = settings.ShowGpuInTrayIcon;
+                showCpuLoad = settings.ShowCpuLoad;
+                showGpuLoad = settings.ShowGpuLoad;
                 startInSystray = settings.StartInSystray;
+                selectedGpuName = string.IsNullOrWhiteSpace(settings.SelectedGpuName) ? "Auto" : settings.SelectedGpuName;
                 displayHorizontal = settings.DisplayHorizontal;
                 boxWidth = settings.BoxWidth;
                 boxSpacing = settings.BoxSpacing;
@@ -777,7 +760,10 @@ namespace MiniStats
                 showGpu = true;
                 showCpuInTrayIcon = false;
                 showGpuInTrayIcon = false;
+                showCpuLoad = false;
+                showGpuLoad = false;
                 startInSystray = false;
+                selectedGpuName = "Auto";
                 displayHorizontal = false;
                 boxWidth = 170;
                 boxSpacing = 8;
@@ -804,7 +790,10 @@ namespace MiniStats
                     ShowGpu = showGpu,
                     ShowCpuInTrayIcon = showCpuInTrayIcon,
                     ShowGpuInTrayIcon = showGpuInTrayIcon,
+                    ShowCpuLoad = showCpuLoad,
+                    ShowGpuLoad = showGpuLoad,
                     StartInSystray = startInSystray,
+                    SelectedGpuName = selectedGpuName,
                     DisplayHorizontal = displayHorizontal,
                     BoxWidth = boxWidth,
                     BoxSpacing = boxSpacing,
