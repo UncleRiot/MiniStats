@@ -42,7 +42,8 @@ Systray Support / free movable:
 
 Settings:
 
-<img width="292" height="340" alt="grafik" src="https://github.com/user-attachments/assets/cf17e992-112c-49d5-94fa-18ab724ca8d9" />
+<img width="595" height="434" alt="grafik" src="https://github.com/user-attachments/assets/fbe2c138-9b8c-441d-bd22-637ee2137af6" />
+
 
 
 
